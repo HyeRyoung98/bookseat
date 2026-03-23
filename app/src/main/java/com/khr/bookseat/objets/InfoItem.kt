@@ -1,0 +1,64 @@
+package com.khr.bookseat.objets
+
+import com.squareup.moshi.Json
+
+data class InfoItem(
+    @field:Json(name = "bdar")
+    val bdar: String,
+    @field:Json(name = "bkmtrCnt")
+    val bkmtrCnt: String,
+    @field:Json(name = "clsrInfoExpln")
+    val clsrInfoExpln: String,
+    @field:Json(name = "ctpvNm")
+    val ctpvNm: String,
+    @field:Json(name = "lat")
+    val lat: String,
+    @field:Json(name = "lclgvNm")
+    val lclgvNm: String,
+    @field:Json(name = "lhldyOperBgngTm")
+    val lhldyOperBgngTm: String,
+    @field:Json(name = "lhldyOperEndTm")
+    val lhldyOperEndTm: String,
+    @field:Json(name = "loanPsbltyBkmtrCnt")
+    val loanPsbltyBkmtrCnt: String,
+    @field:Json(name = "loanPsbltyDayCnt")
+    val loanPsbltyDayCnt: String,
+    @field:Json(name = "lot")
+    val lot: String,
+    @field:Json(name = "nbkmtrCnt")
+    val nbkmtrCnt: String,
+    @field:Json(name = "operInstNm")
+    val operInstNm: String,
+    @field:Json(name = "pblibId")
+    val pblibId: String,
+    @field:Json(name = "pblibNm")
+    val pblibNm: String,
+    @field:Json(name = "pblibRoadNmAddr")
+    val pblibRoadNmAddr: String,
+    @field:Json(name = "pblibTelno")
+    val pblibTelno: String,
+    @field:Json(name = "pblibTypeNm")
+    val pblibTypeNm: String,
+    @field:Json(name = "pltar")
+    val pltar: String,
+    @field:Json(name = "sggNm")
+    val sggNm: String,
+    @field:Json(name = "siteUrlAddr")
+    val siteUrlAddr: String,
+    @field:Json(name = "spblcCnt")
+    val spblcCnt: String,
+    @field:Json(name = "stdgCd")
+    val stdgCd: String,
+    @field:Json(name = "totCrtrYmd")
+    val totCrtrYmd: String,
+    @field:Json(name = "tseatCnt")
+    val tseatCnt: String,
+    @field:Json(name = "wkdyOperBgngTm")
+    val wkdyOperBgngTm: String,
+    @field:Json(name = "wkdyOperEndTm")
+    val wkdyOperEndTm: String,
+    @field:Json(name = "wkndOperBgngTm")
+    val wkndOperBgngTm: String,
+    @field:Json(name = "wkndOperEndTm")
+    val wkndOperEndTm: String
+)
