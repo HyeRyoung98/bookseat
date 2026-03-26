@@ -26,7 +26,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "KAKAO_MAP_KEY", properties.getProperty("KAKAO_MAP_KEY"))
+        buildConfigField("String", "KAKAO_API_KEY", properties.getProperty("KAKAO_API_KEY"))
         buildConfigField("String", "DATA_API_KEY", properties.getProperty("DATA_API_KEY"))
+
     }
 
     buildTypes {
