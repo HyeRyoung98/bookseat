@@ -1,57 +1,76 @@
 package com.khr.bookseat
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.location.LocationServices
 import com.kakao.vectormap.KakaoMap
 import com.kakao.vectormap.KakaoMapReadyCallback
 import com.kakao.vectormap.LatLng
 import com.kakao.vectormap.MapLifeCycleCallback
 import com.kakao.vectormap.MapView
+import com.kakao.vectormap.camera.CameraUpdateFactory
+import com.kakao.vectormap.label.LabelLayer
+import com.kakao.vectormap.label.LabelOptions
+import com.kakao.vectormap.label.LabelStyle
+import com.kakao.vectormap.label.LabelStyles
+import com.kakao.vectormap.label.LabelTransition
+import com.kakao.vectormap.label.Transition
 import com.khr.bookseat.objets.ApiResponse
 import com.khr.bookseat.objets.InfoItem
+import com.khr.bookseat.objets.PrstInfoItem
+import com.khr.bookseat.objets.RltRdrmInfoItem
+import com.khr.bookseat.objets.kakao.Coord2regioncodeRes
 import com.khr.bookseat.services.api.RetrofitInstance
+import com.khr.bookseat.services.api.kakaoMap.KakaoRetrofit
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import retrofit2.Call
 import retrofit2.Response
-import android.Manifest
-import android.annotation.SuppressLint
-import android.content.pm.PackageManager
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material3.Icon
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import com.google.android.gms.location.LocationServices
-import com.kakao.vectormap.camera.CameraUpdateFactory
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,20 +86,33 @@ class MainActivity : ComponentActivity() {
             ) {
 
                 KakaoMapScreen(getLifeCycleCallback(thisContext), getReadyCallback(thisContext))
-                MyLocationButton(onClick = {fetchCurrentLocation()}, modifier = Modifier.align(Alignment.BottomEnd))
+                ResearchButton(
+                    onClick = { onClickResearchButton() },
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+                MyLocationButton(
+                    onClick = { fetchCurrentLocation() },
+                    modifier = Modifier.align(Alignment.BottomEnd)
+                )
             }
         }
 
         requestLocationAndFetch()
 
-        retrofitWork()
+        //retrofitWork()
         //requestLocationAndFetch()
     }
 
 
     private val startZoomLevel = 15
     private val startPosition = LatLng.from(37.394660, 127.111182) // 판교역
-    private var currentPosition by mutableStateOf<LatLng?>(null)    // 현재 위치
+    private var currentPosition: LatLng? = null    // 현재 위치
+    private var dongSearchJob: Job? = null
+    private var infoList: List<InfoItem>? = null
+    private var prstInfoList : List<PrstInfoItem>? = null
+    private var rltRdrmInfoList : List<RltRdrmInfoItem>? = null
+
+
 
     /** 현재 위치 가져오기(구글) */
     private val fusedLocationClient by lazy {
@@ -153,8 +185,9 @@ class MainActivity : ComponentActivity() {
 
     /** 카카오맵 */
     private var kakaoMapRef: KakaoMap? = null
+    private var labelLayer: LabelLayer? = null
     private fun moveCameraTo(pos: LatLng) {
-        val cameraUpdate = CameraUpdateFactory.newCenterPosition(pos)
+        val cameraUpdate = CameraUpdateFactory.newCenterPosition(pos, startZoomLevel)
         kakaoMapRef?.moveCamera(cameraUpdate)
     }
 
@@ -162,9 +195,20 @@ class MainActivity : ComponentActivity() {
         return object : KakaoMapReadyCallback() {
             override fun onMapReady(kakaoMap: KakaoMap) {
                 kakaoMapRef = kakaoMap
+                labelLayer = kakaoMap.getLabelManager()!!.getLayer()
                 // 전달받은 context를 사용
                 Toast.makeText(context, "지도가 준비되었습니다.", Toast.LENGTH_SHORT).show()
                 currentPosition?.let { moveCameraTo(it) }
+
+//                // 초기 중심 좌표도 한 번 조회
+//                val initialPosition = kakaoMap.cameraPosition!!.position
+//                updateRegionByMapCenter(initialPosition)
+//
+                // 사용자가 지도 이동을 마쳤을 때 현재 화면 중앙 좌표 기준으로 동 조회
+                kakaoMap.setOnCameraMoveEndListener { _, cameraPosition, _ ->
+                    currentPosition = cameraPosition.position
+                    //updateRegionByMapCenter(center)
+                }
             }
 
             override fun getPosition(): LatLng {
@@ -195,37 +239,181 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
+    private fun onClickResearchButton() {
+        infoList = null
+        labelLayer?.removeAll()
+        getRegionByMapCenter()
+    }
+
+    fun getTodayYyyyMMdd(): String {
+        val sdf = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+        return sdf.format(Date())
+    }
+
     /** api */
-    private fun retrofitWork() {
+    private fun getInfoData(pStdgCd: String) {
+        if (pStdgCd.isEmpty()) return
+        val siCode = pStdgCd.take(4) + "000000"
+        Log.d("#############pStdgCd###siCode##", "$pStdgCd//$siCode")
         val service = RetrofitInstance.retrofitService
-        service.getInfoData(DATA_API_KEY, "1", "100", "JSON", "5214000000")
+        service.getInfoData(DATA_API_KEY, "1", "100", "JSON", siCode)
             .enqueue(object : retrofit2.Callback<ApiResponse<InfoItem>> {
                 override fun onResponse(
                     call: Call<ApiResponse<InfoItem>>,
                     response: Response<ApiResponse<InfoItem>>
                 ) {
-
                     if (response.isSuccessful) {
-                        Log.d("##################", response.body().toString())
-                        val result = response.body()?.body?.item?.get(0)?.lat
-                        //35.9402673000
+                        val resultCode = response.body()?.header?.resultCode
+                        if (resultCode.equals("K0")) {
+                            Log.d("[getInfoData]request:success", response.body().toString())
 
-                        Log.d("################item##", result + "")
+                            infoList = response.body()?.body?.item
+                            if (infoList != null) {
+
+                                val styles = kakaoMapRef?.getLabelManager()
+                                    ?.addLabelStyles(
+                                        LabelStyles.from(
+                                            LabelStyle.from(R.drawable.pink_marker)
+                                                .setIconTransition(
+                                                    LabelTransition.from(
+                                                        Transition.None,
+                                                        Transition.None
+                                                    )
+                                                )
+                                        )
+                                    )
+
+                                for (lib in infoList) {
+                                    val pos = LatLng.from(lib.lat.toDouble(), lib.lot.toDouble())
+                                    labelLayer?.addLabel(
+                                        LabelOptions.from(lib.pblibId, pos).setStyles(styles)
+                                    )
+                                }
+
+                                kakaoMapRef?.setOnLodLabelClickListener { kakaoMap, lodLabelLayer, lodLabel ->
+                                    lodLabel?.texts?.forEach { it ->
+                                        Log.e("", "lodLabel $it, ${it.length}")
+                                        //clickLabelName = it
+                                    }
+
+                                    false;
+                                }
+
+                            }
+                        } else if (resultCode.equals("K3")) {
+                            Toast.makeText(this@MainActivity, "조회된 정보가 없습니다.", Toast.LENGTH_SHORT)
+                                .show()
+                        } else {
+                            Toast.makeText(this@MainActivity, "에러가 발생했습니다.", Toast.LENGTH_SHORT)
+                                .show()
+                        }
                     } else {
                         Log.d(
-                            "##################",
+                            "[getInfoData]request:fail",
                             "Response not successful: ${response.errorBody()?.string()}"
                         )
                     }
                 }
 
                 override fun onFailure(call: Call<ApiResponse<InfoItem>>, t: Throwable) {
-                    Log.d("태그", t.message.toString())
+                    Log.e("[getInfoData]request:error", t.message.toString())
                 }
             })
     }
 
+    private fun getPrstInfoData(pStdgCd: String) {
+        if (pStdgCd.isEmpty()) return
+        val siCode = pStdgCd.take(4) + "000000"
 
+        val service = RetrofitInstance.retrofitService
+        service.getPrstInfoData(DATA_API_KEY, "1", "100", "JSON", siCode, getTodayYyyyMMdd(), getTodayYyyyMMdd())
+            .enqueue(object : retrofit2.Callback<ApiResponse<PrstInfoItem>> {
+                override fun onResponse(
+                    call: Call<ApiResponse<PrstInfoItem>>,
+                    response: Response<ApiResponse<PrstInfoItem>>
+                ) {
+                    if (response.isSuccessful) {
+                        prstInfoList = response.body()?.body?.item
+                        //Log.d("#############1 result##", result.toString())
+                    } else {
+                        Log.d(
+                            "[getPrstInfoData]request:fail",
+                            "Response not successful: ${response.errorBody()?.string()}"
+                        )
+                    }
+                }
+
+                override fun onFailure(call: Call<ApiResponse<PrstInfoItem>>, t: Throwable) {
+                    Log.e("[getPrstInfoData]request:error", t.message.toString())
+                }
+            })
+    }
+
+    private fun getRltRdrmInfoData(pStdgCd: String) {
+        if (pStdgCd.isEmpty()) return
+        val siCode = pStdgCd.take(4) + "000000"
+
+        val service = RetrofitInstance.retrofitService
+        service.getRltRdrmInfoData(DATA_API_KEY, "1", "100", "JSON", siCode)
+            .enqueue(object : retrofit2.Callback<ApiResponse<RltRdrmInfoItem>> {
+                override fun onResponse(
+                    call: Call<ApiResponse<RltRdrmInfoItem>>,
+                    response: Response<ApiResponse<RltRdrmInfoItem>>
+                ) {
+                    if (response.isSuccessful) {
+                        rltRdrmInfoList = response.body()?.body?.item
+                        //Log.d("#############2 result##", result.toString())
+                    } else {
+                        Log.d(
+                            "[getRltRdrmInfoData]request:fail",
+                            "Response not successful: ${response.errorBody()?.string()}"
+                        )
+                    }
+                }
+
+                override fun onFailure(call: Call<ApiResponse<RltRdrmInfoItem>>, t: Throwable) {
+                    Log.e("[getRltRdrmInfoData]request:error", t.message.toString())
+                }
+            })
+    }
+
+    private fun getRegionByMapCenter() {
+        val service = KakaoRetrofit.kakaoRetrofitService
+
+        dongSearchJob?.cancel()
+        dongSearchJob = lifecycleScope.launch {
+            delay(250)
+            service.coordToRegionCode(
+                "KakaoAK $KAKAO_API_KEY",
+                currentPosition?.longitude ?: startPosition.longitude,
+                currentPosition?.latitude ?: startPosition.latitude
+            )
+                .enqueue(object : retrofit2.Callback<Coord2regioncodeRes> {
+                    override fun onResponse(
+                        call: Call<Coord2regioncodeRes>,
+                        response: Response<Coord2regioncodeRes>
+                    ) {
+                        if (response.isSuccessful) {
+                            val result = response.body()?.documents?.filter { it.regionType == "B" }
+                            getInfoData(result?.get(0)?.code ?: "")
+                            getPrstInfoData(result?.get(0)?.code ?: "")
+                            getRltRdrmInfoData(result?.get(0)?.code ?: "")
+                            Log.d("[getRegionByMapCenter]request:success", result.toString())
+                        } else {
+                            Log.d(
+                                "[getRegionByMapCenter]request:fail",
+                                "Response not successful: ${response.errorBody()?.string()}"
+                            )
+                        }
+                    }
+
+                    override fun onFailure(call: Call<Coord2regioncodeRes>, t: Throwable) {
+                        Log.e("[getRegionByMapCenter]request:error", t.message.toString())
+                    }
+                })
+        }
+    }
 }
 
 /** 컴포넌트 */
@@ -272,6 +460,45 @@ fun KakaoMapScreen(lifeCycleCallback: MapLifeCycleCallback, readyCallback: Kakao
 }
 
 @Composable
+fun ResearchButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier.padding(20.dp)) {
+        Box(
+            modifier = Modifier
+                .border(
+                    width = 3.dp,
+                    color = Color(0xFF1976D2),
+                    shape = RoundedCornerShape(20.dp)
+                )
+                .size(150.dp, 40.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(
+                    color = Color.White.copy(alpha = 0.6f),
+                )
+                .clickable { onClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "이 위치에서 검색",
+                    tint = Color(0xFF1976D2) // 파란색
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(
+                    text = "이 위치에서 검색",
+                    color = Color.DarkGray,//Color(0xFF1976D2),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun MyLocationButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -280,11 +507,7 @@ fun MyLocationButton(
         Box(
             modifier = Modifier
                 .size(50.dp)
-//            .shadow(
-//                elevation = 6.dp,
-//                shape = CircleShape,
-//                clip = false
-//            )
+                .clip(CircleShape)
                 .background(
                     color = Color.White,
                     shape = CircleShape

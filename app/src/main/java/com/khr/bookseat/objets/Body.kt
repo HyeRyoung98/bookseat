@@ -4,7 +4,7 @@ import com.squareup.moshi.Json
 
 data class Body<T>(
     @field:Json(name = "item")
-    val item: List<T>,
+    val item: List<T>? = null,
     @field:Json(name = "numOfRows")
     val numOfRows: Int,
     @field:Json(name = "pageNo")
