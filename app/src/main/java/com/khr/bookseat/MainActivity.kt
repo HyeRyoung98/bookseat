@@ -28,7 +28,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +61,7 @@ import com.kakao.vectormap.label.LabelTransition
 import com.kakao.vectormap.label.Transition
 import com.khr.bookseat.objets.ApiResponse
 import com.khr.bookseat.objets.InfoItem
+import com.khr.bookseat.objets.LibraryBottomSheetData
 import com.khr.bookseat.objets.PrstInfoItem
 import com.khr.bookseat.objets.RltRdrmInfoItem
 import com.khr.bookseat.objets.kakao.Coord2regioncodeRes
@@ -71,6 +75,17 @@ import retrofit2.Response
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,7 +109,17 @@ class MainActivity : ComponentActivity() {
                     onClick = { fetchCurrentLocation() },
                     modifier = Modifier.align(Alignment.BottomEnd)
                 )
+                if (showBottomSheet && selectedLibraryData != null) {
+                    LibraryInfoBottomSheet(
+                        data = selectedLibraryData!!,
+                        onDismiss = {
+                            showBottomSheet = false
+                            selectedLibraryData = null
+                        }
+                    )
+                }
             }
+
         }
 
         requestLocationAndFetch()
@@ -109,9 +134,10 @@ class MainActivity : ComponentActivity() {
     private var currentPosition: LatLng? = null    // 현재 위치
     private var dongSearchJob: Job? = null
     private var infoList: List<InfoItem>? = null
-    private var prstInfoList : List<PrstInfoItem>? = null
-    private var rltRdrmInfoList : List<RltRdrmInfoItem>? = null
-
+    private var prstInfoList: List<PrstInfoItem>? = null
+    private var rltRdrmInfoList: List<RltRdrmInfoItem>? = null
+    private var selectedLibraryData by mutableStateOf<LibraryBottomSheetData?>(null)
+    private var showBottomSheet by mutableStateOf(false)
 
 
     /** 현재 위치 가져오기(구글) */
@@ -182,6 +208,32 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun onClickResearchButton() {
+        infoList = null
+        labelLayer?.removeAll()
+        getRegionByMapCenter()
+    }
+
+    fun getTodayYyyyMMdd(): String {
+        val sdf = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+        return sdf.format(Date())
+    }
+
+    private fun showLibraryBottomSheetById(libraryId: String) {
+        val info = infoList?.find { it.pblibId == libraryId } ?: return
+
+        // 아래 키는 실제 응답 필드명에 맞춰 수정해야 함
+        //val prst = prstInfoList?.find { it.pblibId == libraryId }
+        val rlt = rltRdrmInfoList?.find { it.pblibId == libraryId }
+
+        selectedLibraryData = LibraryBottomSheetData(
+            info = info,
+            prstInfo = null,
+            rltRdrmInfo = rlt
+        )
+        showBottomSheet = true
+    }
+
 
     /** 카카오맵 */
     private var kakaoMapRef: KakaoMap? = null
@@ -240,22 +292,8 @@ class MainActivity : ComponentActivity() {
     }
 
 
-    private fun onClickResearchButton() {
-        infoList = null
-        labelLayer?.removeAll()
-        getRegionByMapCenter()
-    }
-
-    fun getTodayYyyyMMdd(): String {
-        val sdf = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
-        return sdf.format(Date())
-    }
-
     /** api */
-    private fun getInfoData(pStdgCd: String) {
-        if (pStdgCd.isEmpty()) return
-        val siCode = pStdgCd.take(4) + "000000"
-        Log.d("#############pStdgCd###siCode##", "$pStdgCd//$siCode")
+    private fun getInfoData(siCode: String) {
         val service = RetrofitInstance.retrofitService
         service.getInfoData(DATA_API_KEY, "1", "100", "JSON", siCode)
             .enqueue(object : retrofit2.Callback<ApiResponse<InfoItem>> {
@@ -291,13 +329,15 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
 
-                                kakaoMapRef?.setOnLodLabelClickListener { kakaoMap, lodLabelLayer, lodLabel ->
-                                    lodLabel?.texts?.forEach { it ->
-                                        Log.e("", "lodLabel $it, ${it.length}")
-                                        //clickLabelName = it
+                                kakaoMapRef?.setOnLabelClickListener { _, _, lab ->
+                                    val clickedId = lab?.labelId
+                                    Log.d("labelClick", "clickedId = $clickedId")
+
+                                    if (!clickedId.isNullOrEmpty()) {
+                                        showLibraryBottomSheetById(clickedId)
                                     }
 
-                                    false;
+                                    true
                                 }
 
                             }
@@ -327,7 +367,15 @@ class MainActivity : ComponentActivity() {
         val siCode = pStdgCd.take(4) + "000000"
 
         val service = RetrofitInstance.retrofitService
-        service.getPrstInfoData(DATA_API_KEY, "1", "100", "JSON", siCode, getTodayYyyyMMdd(), getTodayYyyyMMdd())
+        service.getPrstInfoData(
+            DATA_API_KEY,
+            "1",
+            "100",
+            "JSON",
+            siCode,
+            getTodayYyyyMMdd(),
+            getTodayYyyyMMdd()
+        )
             .enqueue(object : retrofit2.Callback<ApiResponse<PrstInfoItem>> {
                 override fun onResponse(
                     call: Call<ApiResponse<PrstInfoItem>>,
@@ -363,6 +411,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     if (response.isSuccessful) {
                         rltRdrmInfoList = response.body()?.body?.item
+                        getInfoData(siCode)
                         //Log.d("#############2 result##", result.toString())
                     } else {
                         Log.d(
@@ -396,8 +445,8 @@ class MainActivity : ComponentActivity() {
                     ) {
                         if (response.isSuccessful) {
                             val result = response.body()?.documents?.filter { it.regionType == "B" }
-                            getInfoData(result?.get(0)?.code ?: "")
-                            getPrstInfoData(result?.get(0)?.code ?: "")
+
+                            //getPrstInfoData(result?.get(0)?.code ?: "")
                             getRltRdrmInfoData(result?.get(0)?.code ?: "")
                             Log.d("[getRegionByMapCenter]request:success", result.toString())
                         } else {
@@ -521,6 +570,80 @@ fun MyLocationButton(
                 contentDescription = "내 위치 이동",
                 tint = Color(0xFF1976D2) // 파란색
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LibraryInfoBottomSheet(
+    data: LibraryBottomSheetData,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(20.dp)
+                .heightIn(max = 500.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text(
+                text = data.info.pblibNm ?: "도서관 정보",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.size(12.dp))
+            HorizontalDivider()
+
+            Spacer(modifier = Modifier.size(12.dp))
+
+            //Text(text = "도서관 ID: ${data.info.pblibId ?: "-"}")
+            Text(text = "주소: ${data.info.pblibRoadNmAddr ?: "-"}")
+            Text(text = "전화번호: ${data.info.pblibTelno ?: "-"}")
+            //Text(text = "위도: ${data.info.lat ?: "-"}")
+            //Text(text = "경도: ${data.info.lot ?: "-"}")
+
+            Spacer(modifier = Modifier.size(16.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.size(16.dp))
+
+            Text(
+                text = "좌석/열람실 정보",
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp
+            )
+
+            Spacer(modifier = Modifier.size(8.dp))
+
+            Text(
+                text = "실시간 열람실 정보: ${
+                    data.rltRdrmInfo?.toString() ?: "없음"
+                }"
+            )
+
+            Spacer(modifier = Modifier.size(8.dp))
+
+            Text(
+                text = "당일 이용 정보: ${
+                    data.prstInfo?.toString() ?: "없음"
+                }"
+            )
+
+            Spacer(modifier = Modifier.size(20.dp))
+
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text("닫기")
+            }
+
+            Spacer(modifier = Modifier.size(12.dp))
         }
     }
 }
