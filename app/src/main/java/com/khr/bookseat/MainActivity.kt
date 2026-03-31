@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -77,15 +78,15 @@ import java.util.Date
 import java.util.Locale
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -115,7 +116,8 @@ class MainActivity : ComponentActivity() {
                         onDismiss = {
                             showBottomSheet = false
                             selectedLibraryData = null
-                        }
+                        },
+                        fnFormatPhoneNumber = ::formatPhoneNumber
                     )
                 }
             }
@@ -123,9 +125,7 @@ class MainActivity : ComponentActivity() {
         }
 
         requestLocationAndFetch()
-
-        //retrofitWork()
-        //requestLocationAndFetch()
+        onClickResearchButton()
     }
 
 
@@ -176,7 +176,6 @@ class MainActivity : ComponentActivity() {
                 val lat = location.latitude
                 val lng = location.longitude
 
-                Toast.makeText(this, "현재 위치: $lat, $lng", Toast.LENGTH_SHORT).show()
                 currentPosition = LatLng.from(lat, lng)
                 currentPosition?.let { moveCameraTo(it) }
             }
@@ -214,7 +213,7 @@ class MainActivity : ComponentActivity() {
         getRegionByMapCenter()
     }
 
-    fun getTodayYyyyMMdd(): String {
+    private fun getTodayYyyyMMdd(): String {
         val sdf = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
         return sdf.format(Date())
     }
@@ -224,14 +223,35 @@ class MainActivity : ComponentActivity() {
 
         // 아래 키는 실제 응답 필드명에 맞춰 수정해야 함
         //val prst = prstInfoList?.find { it.pblibId == libraryId }
-        val rlt = rltRdrmInfoList?.find { it.pblibId == libraryId }
-
+        val rlt = rltRdrmInfoList?.filter { it.pblibId == libraryId }
         selectedLibraryData = LibraryBottomSheetData(
             info = info,
             prstInfo = null,
             rltRdrmInfo = rlt
         )
         showBottomSheet = true
+    }
+
+    private fun formatPhoneNumber(phone: String): String {
+        val digits = phone.filter { it.isDigit() }
+
+        return when {
+            // 서울 지역번호(02)
+            digits.startsWith("02") && digits.length == 9 ->
+                digits.replaceFirst(Regex("(02)(\\d{3})(\\d{4})"), "$1-$2-$3")
+
+            digits.startsWith("02") && digits.length == 10 ->
+                digits.replaceFirst(Regex("(02)(\\d{4})(\\d{4})"), "$1-$2-$3")
+
+            // 휴대폰 / 일반 지역번호 / 인터넷전화(3자리 국번)
+            digits.length == 10 ->
+                digits.replaceFirst(Regex("(\\d{3})(\\d{3})(\\d{4})"), "$1-$2-$3")
+
+            digits.length == 11 ->
+                digits.replaceFirst(Regex("(\\d{3})(\\d{4})(\\d{4})"), "$1-$2-$3")
+
+            else -> phone
+        }
     }
 
 
@@ -252,14 +272,9 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(context, "지도가 준비되었습니다.", Toast.LENGTH_SHORT).show()
                 currentPosition?.let { moveCameraTo(it) }
 
-//                // 초기 중심 좌표도 한 번 조회
-//                val initialPosition = kakaoMap.cameraPosition!!.position
-//                updateRegionByMapCenter(initialPosition)
-//
                 // 사용자가 지도 이동을 마쳤을 때 현재 화면 중앙 좌표 기준으로 동 조회
                 kakaoMap.setOnCameraMoveEndListener { _, cameraPosition, _ ->
                     currentPosition = cameraPosition.position
-                    //updateRegionByMapCenter(center)
                 }
             }
 
@@ -383,7 +398,6 @@ class MainActivity : ComponentActivity() {
                 ) {
                     if (response.isSuccessful) {
                         prstInfoList = response.body()?.body?.item
-                        //Log.d("#############1 result##", result.toString())
                     } else {
                         Log.d(
                             "[getPrstInfoData]request:fail",
@@ -412,7 +426,6 @@ class MainActivity : ComponentActivity() {
                     if (response.isSuccessful) {
                         rltRdrmInfoList = response.body()?.body?.item
                         getInfoData(siCode)
-                        //Log.d("#############2 result##", result.toString())
                     } else {
                         Log.d(
                             "[getRltRdrmInfoData]request:fail",
@@ -467,7 +480,10 @@ class MainActivity : ComponentActivity() {
 
 /** 컴포넌트 */
 @Composable
-fun KakaoMapScreen(lifeCycleCallback: MapLifeCycleCallback, readyCallback: KakaoMapReadyCallback) {
+private fun KakaoMapScreen(
+    lifeCycleCallback: MapLifeCycleCallback,
+    readyCallback: KakaoMapReadyCallback
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -493,23 +509,14 @@ fun KakaoMapScreen(lifeCycleCallback: MapLifeCycleCallback, readyCallback: Kakao
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
-
-    //val currentPos = currentPosition
     AndroidView(
         modifier = Modifier.fillMaxSize(),
-        factory = { mapView },
-        update = { mv ->
-            // 지도 준비/표시 (필요하면 여기서 컨트롤)
-//            mv.getMapAsync { kakaoMap ->
-//                // 예: 기본 설정(원하면 여기 커스텀)
-//                // kakaoMap.set...()
-//            }
-        }
+        factory = { mapView }
     )
 }
 
 @Composable
-fun ResearchButton(
+private fun ResearchButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -538,7 +545,7 @@ fun ResearchButton(
                 Spacer(modifier = Modifier.size(8.dp))
                 Text(
                     text = "이 위치에서 검색",
-                    color = Color.DarkGray,//Color(0xFF1976D2),
+                    color = Color.DarkGray,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                 )
@@ -548,7 +555,7 @@ fun ResearchButton(
 }
 
 @Composable
-fun MyLocationButton(
+private fun MyLocationButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -565,7 +572,6 @@ fun MyLocationButton(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                //imageVector = Icons.Default.LocationOn,
                 painter = painterResource(id = R.drawable.outline_my_location_black_24),
                 contentDescription = "내 위치 이동",
                 tint = Color(0xFF1976D2) // 파란색
@@ -574,11 +580,50 @@ fun MyLocationButton(
     }
 }
 
+@Composable
+private fun LibRoomListItem(data: RltRdrmInfoItem) {
+    Row(
+        modifier = Modifier
+            .padding(10.dp)
+            .height(30.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = data.rdrmTypeNm,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Normal,
+            color = Color.LightGray
+        )
+        Text(
+            text = data.rdrmNm,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        if (data.bldgFlrExpln.isNotEmpty())
+            Text(
+                text = "(" + data.bldgFlrExpln.filter { it.isDigit() } + "층)",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Normal
+            )
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Text(
+            text = (data.useSeatCnt.toInt() + data.rsvtSeatCnt.toInt()).toString() + "/" + data.tseatCnt,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryInfoBottomSheet(
+private fun LibraryInfoBottomSheet(
     data: LibraryBottomSheetData,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    fnFormatPhoneNumber: (String) -> String
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss
@@ -592,7 +637,7 @@ fun LibraryInfoBottomSheet(
                 .verticalScroll(rememberScrollState())
         ) {
             Text(
-                text = data.info.pblibNm ?: "도서관 정보",
+                text = data.info.pblibNm,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -602,11 +647,8 @@ fun LibraryInfoBottomSheet(
 
             Spacer(modifier = Modifier.size(12.dp))
 
-            //Text(text = "도서관 ID: ${data.info.pblibId ?: "-"}")
-            Text(text = "주소: ${data.info.pblibRoadNmAddr ?: "-"}")
-            Text(text = "전화번호: ${data.info.pblibTelno ?: "-"}")
-            //Text(text = "위도: ${data.info.lat ?: "-"}")
-            //Text(text = "경도: ${data.info.lot ?: "-"}")
+            Text(text = "주소: ${data.info.pblibRoadNmAddr}")
+            Text(text = "전화번호: ${fnFormatPhoneNumber(data.info.pblibTelno)}")
 
             Spacer(modifier = Modifier.size(16.dp))
             HorizontalDivider()
@@ -620,30 +662,13 @@ fun LibraryInfoBottomSheet(
 
             Spacer(modifier = Modifier.size(8.dp))
 
-            Text(
-                text = "실시간 열람실 정보: ${
-                    data.rltRdrmInfo?.toString() ?: "없음"
-                }"
-            )
-
-            Spacer(modifier = Modifier.size(8.dp))
-
-            Text(
-                text = "당일 이용 정보: ${
-                    data.prstInfo?.toString() ?: "없음"
-                }"
-            )
-
-            Spacer(modifier = Modifier.size(20.dp))
-
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.align(Alignment.End)
-            ) {
-                Text("닫기")
+            Box(modifier = Modifier.height(200.dp)) {
+                LazyColumn {
+                    items(data.rltRdrmInfo?.size ?: 0) { item ->
+                        LibRoomListItem(data.rltRdrmInfo!![item])
+                    }
+                }
             }
-
-            Spacer(modifier = Modifier.size(12.dp))
         }
     }
 }
