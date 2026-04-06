@@ -91,9 +91,10 @@ import androidx.compose.material3.ModalBottomSheet
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        //enableEdgeToEdge()
-        val thisContext = this
         setContent {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val lifeCycleCallback = remember { getLifeCycleCallback(context) }
+            val readyCallback = remember { getReadyCallback(context) }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -101,7 +102,7 @@ class MainActivity : ComponentActivity() {
                     .background(Color.Gray)
             ) {
 
-                KakaoMapScreen(getLifeCycleCallback(thisContext), getReadyCallback(thisContext))
+                KakaoMapScreen(lifeCycleCallback, readyCallback)
                 ResearchButton(
                     onClick = { onClickResearchButton() },
                     modifier = Modifier.align(Alignment.TopCenter)
@@ -291,17 +292,22 @@ class MainActivity : ComponentActivity() {
     private fun getLifeCycleCallback(context: Context): MapLifeCycleCallback {
         return object : MapLifeCycleCallback() {
             override fun onMapResumed() {
-                super.onMapResumed()
+                Log.d("KakaoMap", "onMapResumed")
             }
 
             override fun onMapPaused() {
-                super.onMapPaused()
+                Log.d("KakaoMap", "onMapPaused")
             }
 
             override fun onMapDestroy() {
+                Log.d("KakaoMap", "onMapDestroy")
+                kakaoMapRef = null
+                labelLayer = null
             }
 
             override fun onMapError(error: Exception) {
+                Log.e("KakaoMap", "onMapError", error)
+                Toast.makeText(context, "지도 오류: ${error.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -490,16 +496,34 @@ private fun KakaoMapScreen(
     // MapView를 한 번만 생성해서 재사용
     val mapView = remember { MapView(context) }
 
+    var isMapStarted by remember { mutableStateOf(false) }
+
     // Compose Lifecycle ↔ MapView Lifecycle 연결
     DisposableEffect(lifecycleOwner, mapView) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-//                Lifecycle.Event.ON_CREATE -> mapView.onCreate(null)
-                Lifecycle.Event.ON_START -> mapView.start(lifeCycleCallback, readyCallback)
-//                Lifecycle.Event.ON_RESUME -> mapView.onResume()
-//                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
-//                Lifecycle.Event.ON_STOP -> mapView.onStop()
-//                Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
+                Lifecycle.Event.ON_START -> {
+                    if(!isMapStarted){
+                        mapView.start(lifeCycleCallback, readyCallback)
+                        isMapStarted = true
+                    }
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    if(isMapStarted){
+                        mapView.resume()
+                    }
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    if(isMapStarted){
+                        mapView.pause()
+                    }
+                }
+                Lifecycle.Event.ON_DESTROY -> {
+                    if(isMapStarted){
+                        mapView.finish()
+                        isMapStarted = false
+                    }
+                }
                 else -> {}
             }
         }
