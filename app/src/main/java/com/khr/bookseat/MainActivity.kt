@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -87,14 +88,26 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 
 class MainActivity : ComponentActivity() {
+
+    private val viewModel: LibraryMapViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             val context = androidx.compose.ui.platform.LocalContext.current
+            val uiState by viewModel.uiState.collectAsState()
+
             val lifeCycleCallback = remember { getLifeCycleCallback(context) }
             val readyCallback = remember { getReadyCallback(context) }
+
+            LaunchedEffect(uiState.infoList) {
+                renderLibraryMarkers(uiState.infoList)
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -104,41 +117,37 @@ class MainActivity : ComponentActivity() {
 
                 KakaoMapScreen(lifeCycleCallback, readyCallback)
                 ResearchButton(
-                    onClick = { onClickResearchButton() },
+                    onClick = {
+                        viewModel.searchLibrariesByMapCenter(
+                            currentPosition = uiState.currentPosition,
+                            startPosition = startPosition
+                        )
+                    },
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
                 MyLocationButton(
                     onClick = { fetchCurrentLocation() },
                     modifier = Modifier.align(Alignment.BottomEnd)
                 )
-                if (showBottomSheet && selectedLibraryData != null) {
+                if (uiState.showBottomSheet && uiState.selectedLibraryData != null) {
                     LibraryInfoBottomSheet(
-                        data = selectedLibraryData!!,
+                        data = uiState.selectedLibraryData!!,
                         onDismiss = {
-                            showBottomSheet = false
-                            selectedLibraryData = null
+                            viewModel.dismissBottomSheet()
                         },
                         fnFormatPhoneNumber = ::formatPhoneNumber
                     )
                 }
             }
-
         }
 
         requestLocationAndFetch()
-        onClickResearchButton()
     }
 
 
-    private val startZoomLevel = 15
+    private val startZoomLevel = 12
     private val startPosition = LatLng.from(37.394660, 127.111182) // 판교역
-    private var currentPosition: LatLng? = null    // 현재 위치
-    private var dongSearchJob: Job? = null
-    private var infoList: List<InfoItem>? = null
-    private var prstInfoList: List<PrstInfoItem>? = null
-    private var rltRdrmInfoList: List<RltRdrmInfoItem>? = null
-    private var selectedLibraryData by mutableStateOf<LibraryBottomSheetData?>(null)
-    private var showBottomSheet by mutableStateOf(false)
+    private var pendingCameraPosition: LatLng? = null
 
 
     /** 현재 위치 가져오기(구글) */
@@ -177,8 +186,18 @@ class MainActivity : ComponentActivity() {
                 val lat = location.latitude
                 val lng = location.longitude
 
-                currentPosition = LatLng.from(lat, lng)
-                currentPosition?.let { moveCameraTo(it) }
+                val position = LatLng.from(lat, lng)
+                viewModel.updateCurrentPosition(position)
+
+                if (kakaoMapRef != null) {
+                    moveCameraTo(position)
+                    viewModel.searchLibrariesByMapCenter(
+                        currentPosition = position,
+                        startPosition = startPosition
+                    )
+                } else {
+                    pendingCameraPosition = position
+                }
             }
             .addOnFailureListener {
                 Toast.makeText(this, "위치 조회 실패: ${it.message}", Toast.LENGTH_SHORT).show()
@@ -208,31 +227,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun onClickResearchButton() {
-        infoList = null
-        labelLayer?.removeAll()
-        getRegionByMapCenter()
-    }
-
-    private fun getTodayYyyyMMdd(): String {
-        val sdf = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
-        return sdf.format(Date())
-    }
-
-    private fun showLibraryBottomSheetById(libraryId: String) {
-        val info = infoList?.find { it.pblibId == libraryId } ?: return
-
-        // 아래 키는 실제 응답 필드명에 맞춰 수정해야 함
-        //val prst = prstInfoList?.find { it.pblibId == libraryId }
-        val rlt = rltRdrmInfoList?.filter { it.pblibId == libraryId }
-        selectedLibraryData = LibraryBottomSheetData(
-            info = info,
-            prstInfo = null,
-            rltRdrmInfo = rlt
-        )
-        showBottomSheet = true
-    }
-
     private fun formatPhoneNumber(phone: String): String {
         val digits = phone.filter { it.isDigit() }
 
@@ -255,7 +249,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-
     /** 카카오맵 */
     private var kakaoMapRef: KakaoMap? = null
     private var labelLayer: LabelLayer? = null
@@ -269,13 +262,28 @@ class MainActivity : ComponentActivity() {
             override fun onMapReady(kakaoMap: KakaoMap) {
                 kakaoMapRef = kakaoMap
                 labelLayer = kakaoMap.getLabelManager()!!.getLayer()
-                // 전달받은 context를 사용
-                Toast.makeText(context, "지도가 준비되었습니다.", Toast.LENGTH_SHORT).show()
-                currentPosition?.let { moveCameraTo(it) }
 
-                // 사용자가 지도 이동을 마쳤을 때 현재 화면 중앙 좌표 기준으로 동 조회
+                pendingCameraPosition?.let {
+                    moveCameraTo(it)
+                    viewModel.searchLibrariesByMapCenter(
+                        currentPosition = it,
+                        startPosition = startPosition
+                    )
+                    pendingCameraPosition = null
+                }
+
+                // 사용자가 지도 이동을 마쳤을 때 현재 화면 중앙 좌표 저장
                 kakaoMap.setOnCameraMoveEndListener { _, cameraPosition, _ ->
-                    currentPosition = cameraPosition.position
+                    viewModel.updateCurrentPosition(cameraPosition.position)
+                }
+
+                kakaoMapRef?.setOnLabelClickListener { _, _, lab ->
+                    val clickedId = lab?.labelId
+
+                    if (!clickedId.isNullOrEmpty()) {
+                        viewModel.showLibraryBottomSheetById(clickedId)
+                    }
+                    true
                 }
             }
 
@@ -312,174 +320,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun renderLibraryMarkers(libraries: List<InfoItem>) {
+        val map = kakaoMapRef ?: return
+        val layer = labelLayer ?: return
 
-    /** api */
-    private fun getInfoData(siCode: String) {
-        val service = RetrofitInstance.retrofitService
-        service.getInfoData(DATA_API_KEY, "1", "100", "JSON", siCode)
-            .enqueue(object : retrofit2.Callback<ApiResponse<InfoItem>> {
-                override fun onResponse(
-                    call: Call<ApiResponse<InfoItem>>,
-                    response: Response<ApiResponse<InfoItem>>
-                ) {
-                    if (response.isSuccessful) {
-                        val resultCode = response.body()?.header?.resultCode
-                        if (resultCode.equals("K0")) {
-                            Log.d("[getInfoData]request:success", response.body().toString())
+        layer.removeAll()
 
-                            infoList = response.body()?.body?.item
-                            if (infoList != null) {
-
-                                val styles = kakaoMapRef?.getLabelManager()
-                                    ?.addLabelStyles(
-                                        LabelStyles.from(
-                                            LabelStyle.from(R.drawable.pink_marker)
-                                                .setIconTransition(
-                                                    LabelTransition.from(
-                                                        Transition.None,
-                                                        Transition.None
-                                                    )
-                                                )
-                                        )
-                                    )
-
-                                for (lib in infoList) {
-                                    val pos = LatLng.from(lib.lat.toDouble(), lib.lot.toDouble())
-                                    labelLayer?.addLabel(
-                                        LabelOptions.from(lib.pblibId, pos).setStyles(styles)
-                                    )
-                                }
-
-                                kakaoMapRef?.setOnLabelClickListener { _, _, lab ->
-                                    val clickedId = lab?.labelId
-                                    Log.d("labelClick", "clickedId = $clickedId")
-
-                                    if (!clickedId.isNullOrEmpty()) {
-                                        showLibraryBottomSheetById(clickedId)
-                                    }
-
-                                    true
-                                }
-
-                            }
-                        } else if (resultCode.equals("K3")) {
-                            Toast.makeText(this@MainActivity, "조회된 정보가 없습니다.", Toast.LENGTH_SHORT)
-                                .show()
-                        } else {
-                            Toast.makeText(this@MainActivity, "에러가 발생했습니다.", Toast.LENGTH_SHORT)
-                                .show()
-                        }
-                    } else {
-                        Log.d(
-                            "[getInfoData]request:fail",
-                            "Response not successful: ${response.errorBody()?.string()}"
-                        )
-                    }
-                }
-
-                override fun onFailure(call: Call<ApiResponse<InfoItem>>, t: Throwable) {
-                    Log.e("[getInfoData]request:error", t.message.toString())
-                }
-            })
-    }
-
-    private fun getPrstInfoData(pStdgCd: String) {
-        if (pStdgCd.isEmpty()) return
-        val siCode = pStdgCd.take(4) + "000000"
-
-        val service = RetrofitInstance.retrofitService
-        service.getPrstInfoData(
-            DATA_API_KEY,
-            "1",
-            "100",
-            "JSON",
-            siCode,
-            getTodayYyyyMMdd(),
-            getTodayYyyyMMdd()
-        )
-            .enqueue(object : retrofit2.Callback<ApiResponse<PrstInfoItem>> {
-                override fun onResponse(
-                    call: Call<ApiResponse<PrstInfoItem>>,
-                    response: Response<ApiResponse<PrstInfoItem>>
-                ) {
-                    if (response.isSuccessful) {
-                        prstInfoList = response.body()?.body?.item
-                    } else {
-                        Log.d(
-                            "[getPrstInfoData]request:fail",
-                            "Response not successful: ${response.errorBody()?.string()}"
-                        )
-                    }
-                }
-
-                override fun onFailure(call: Call<ApiResponse<PrstInfoItem>>, t: Throwable) {
-                    Log.e("[getPrstInfoData]request:error", t.message.toString())
-                }
-            })
-    }
-
-    private fun getRltRdrmInfoData(pStdgCd: String) {
-        if (pStdgCd.isEmpty()) return
-        val siCode = pStdgCd.take(4) + "000000"
-
-        val service = RetrofitInstance.retrofitService
-        service.getRltRdrmInfoData(DATA_API_KEY, "1", "100", "JSON", siCode)
-            .enqueue(object : retrofit2.Callback<ApiResponse<RltRdrmInfoItem>> {
-                override fun onResponse(
-                    call: Call<ApiResponse<RltRdrmInfoItem>>,
-                    response: Response<ApiResponse<RltRdrmInfoItem>>
-                ) {
-                    if (response.isSuccessful) {
-                        rltRdrmInfoList = response.body()?.body?.item
-                        getInfoData(siCode)
-                    } else {
-                        Log.d(
-                            "[getRltRdrmInfoData]request:fail",
-                            "Response not successful: ${response.errorBody()?.string()}"
-                        )
-                    }
-                }
-
-                override fun onFailure(call: Call<ApiResponse<RltRdrmInfoItem>>, t: Throwable) {
-                    Log.e("[getRltRdrmInfoData]request:error", t.message.toString())
-                }
-            })
-    }
-
-    private fun getRegionByMapCenter() {
-        val service = KakaoRetrofit.kakaoRetrofitService
-
-        dongSearchJob?.cancel()
-        dongSearchJob = lifecycleScope.launch {
-            delay(250)
-            service.coordToRegionCode(
-                "KakaoAK $KAKAO_API_KEY",
-                currentPosition?.longitude ?: startPosition.longitude,
-                currentPosition?.latitude ?: startPosition.latitude
-            )
-                .enqueue(object : retrofit2.Callback<Coord2regioncodeRes> {
-                    override fun onResponse(
-                        call: Call<Coord2regioncodeRes>,
-                        response: Response<Coord2regioncodeRes>
-                    ) {
-                        if (response.isSuccessful) {
-                            val result = response.body()?.documents?.filter { it.regionType == "B" }
-
-                            //getPrstInfoData(result?.get(0)?.code ?: "")
-                            getRltRdrmInfoData(result?.get(0)?.code ?: "")
-                            Log.d("[getRegionByMapCenter]request:success", result.toString())
-                        } else {
-                            Log.d(
-                                "[getRegionByMapCenter]request:fail",
-                                "Response not successful: ${response.errorBody()?.string()}"
+        val styles = map.getLabelManager()
+            ?.addLabelStyles(
+                LabelStyles.from(
+                    LabelStyle.from(R.drawable.pink_marker)
+                        .setIconTransition(
+                            LabelTransition.from(
+                                Transition.None,
+                                Transition.None
                             )
-                        }
-                    }
+                        )
+                )
+            ) ?: return
 
-                    override fun onFailure(call: Call<Coord2regioncodeRes>, t: Throwable) {
-                        Log.e("[getRegionByMapCenter]request:error", t.message.toString())
-                    }
-                })
+        libraries.forEach { lib ->
+            val lat = lib.lat.toDoubleOrNull() ?: return@forEach
+            val lng = lib.lot.toDoubleOrNull() ?: return@forEach
+
+            val pos = LatLng.from(lat, lng)
+            layer.addLabel(
+                LabelOptions.from(lib.pblibId, pos).setStyles(styles)
+            )
         }
     }
 }
@@ -503,27 +370,31 @@ private fun KakaoMapScreen(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
-                    if(!isMapStarted){
+                    if (!isMapStarted) {
                         mapView.start(lifeCycleCallback, readyCallback)
                         isMapStarted = true
                     }
                 }
+
                 Lifecycle.Event.ON_RESUME -> {
-                    if(isMapStarted){
+                    if (isMapStarted) {
                         mapView.resume()
                     }
                 }
+
                 Lifecycle.Event.ON_PAUSE -> {
-                    if(isMapStarted){
+                    if (isMapStarted) {
                         mapView.pause()
                     }
                 }
+
                 Lifecycle.Event.ON_DESTROY -> {
-                    if(isMapStarted){
+                    if (isMapStarted) {
                         mapView.finish()
                         isMapStarted = false
                     }
                 }
+
                 else -> {}
             }
         }
